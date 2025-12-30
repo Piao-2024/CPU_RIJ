@@ -1,0 +1,12 @@
+# 注释掉这些报错的输出信号约束（仅保留clk和rst_n的核心约束）
+# NET "inst_addr_out" LOC = A1 | IOSTANDARD = LVCMOS33;
+# NET "inst_out" LOC = A2 | IOSTANDARD = LVCMOS33;
+# NET "alu_out_out" LOC = A3 | IOSTANDARD = LVCMOS33;
+# NET "data_rd_out" LOC = A4 | IOSTANDARD = LVCMOS33;
+# NET "zero_out" LOC = A5 | IOSTANDARD = LVCMOS33;
+
+# 只保留clk和rst_n的核心约束（必须有，不报错）
+NET "clk" LOC = C9 | IOSTANDARD = LVCMOS33;
+NET "clk" TNM_NET = clk_net;
+TIMESPEC TS_clk = PERIOD "clk_net" 20 ns HIGH 50%;
+NET "rst_n" LOC = P4 | IOSTANDARD = LVCMOS33 | PULLUP;
