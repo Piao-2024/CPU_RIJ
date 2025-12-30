@@ -1,78 +1,128 @@
 `timescale 1ns / 1ps
 
 // Controller：控制器/译码器
-// - 输入：op/func（指令字段）、Zero（ALU 比较结果）
-// - 输出：PC_s / ALU_OP / imm_s / Write_Reg / w_r_s / wr_data_s* / Mem_Write
+// 功能：根据指令字段 (op/func) 与比较结果 (Zero)，产生整条数据通路所需的控制信号
+//
+// 主要输出信号语义（结合你工程其它模块命名推断）：
+// - PC_s[1:0]：PC 更新来源选择（见 PC.v）
+// - ALU_OP[2:0]：ALU 运算选择（例如 000=add, 001=sub ... 具体以 ALU 模块为准）
+// - imm_s：ALU 第二操作数选择（0=寄存器rt数据，1=立即数扩展值）
+// - w_r_s[1:0]：写回目的寄存器选择
+//   例：00=rd（R型），01=rt（I型，如 addi），11=$31（jal）——具体以 RegDst/写地址MUX为准
+// - wr_data_s1/wr_data_s0：写回数据选择（两位选择，等价于 wr_data_sel[1:0]）
+//   例：jal 需要写 PC+4 到 $31，因此会设置某种“选择 PC+4 的通道”
+// - Write_Reg：寄存器堆写使能
+// - Mem_Write：数据存储器写使能（此实验未使用/或未实现 sw，因此保持 0）
+//
+// 说明：该模块是纯组合逻辑：输入变化会立即反映到输出（无时钟）
 module Controller(
     input [5:0] op,
     input [5:0] func,
-    input Zero,             // ALU零标志（beq/bne判断）
-    output reg [1:0] w_r_s, // 写地址选择
-    output reg imm_s,       // ALU源选择
-    output reg wr_data_s1,  // 写数据选择位1
-    output reg wr_data_s0,  // 写数据选择位0
-    output reg [2:0] ALU_OP,// ALU操作码
-    output reg Write_Reg,   // 寄存器写使能
-    output reg Mem_Write,   // 存储器写使能（实验未要求，置0）
-    output reg [1:0] PC_s   // PC选择信号
+    input Zero,              // ALU 的 Zero 标志（常用于 beq/bne）
+    output reg [1:0] w_r_s,  // 写回目的寄存器选择
+    output reg imm_s,        // ALU 第二操作数选择（寄存器/立即数）
+    output reg wr_data_s1,   // 写回数据选择 bit1
+    output reg wr_data_s0,   // 写回数据选择 bit0
+    output reg [2:0] ALU_OP, // ALU 运算控制码
+    output reg Write_Reg,    // 寄存器写使能
+    output reg Mem_Write,    // 数据存储器写使能
+    output reg [1:0] PC_s    // PC 更新来源选择
 );
 
 always @(*) begin
-    // 默认值初始化（未识别指令时的“安全态”）
-    // - PC_s=00：顺序执行（PC+4）
-    // - Write_Reg/Mem_Write=0：不写寄存器/不写内存
-    w_r_s = 2'b00;
-    imm_s = 1'b0;
+    // =========================================================
+    // 1) 默认值（安全态）
+    // 未识别指令时：
+    // - 不写寄存器
+    // - 不写内存
+    // - PC 默认顺序执行 +4
+    // =========================================================
+    w_r_s      = 2'b00;
+    imm_s      = 1'b0;
     wr_data_s1 = 1'b0;
     wr_data_s0 = 1'b0;
-    ALU_OP = 3'b000;
-    Write_Reg = 1'b0;
-    Mem_Write = 1'b0;
-    PC_s = 2'b00; // 默认PC+4
+    ALU_OP     = 3'b000;
+    Write_Reg  = 1'b0;
+    Mem_Write  = 1'b0;
+    PC_s       = 2'b00;
 
-    // op 译码
+    // =========================================================
+    // 2) 主译码：按 opcode 决定指令类型
+    // =========================================================
     case(op)
-        6'b000000: begin // R型指令（仅实现jr）
-            // func 进一步译码
+        // -----------------------------------------------------
+        // R 型：这里只实现 jr（func=001000）
+        // -----------------------------------------------------
+        6'b000000: begin    
             case(func)
                 6'b001000: begin // jr rs
-                    PC_s = 2'b01; // 选rs_data作为PC
+                    // jr 不写寄存器，只改变 PC
+                    PC_s      = 2'b01; // PC = R_Data_A
                     Write_Reg = 1'b0;
                 end
-                default: ;
+                default: begin
+                    // 其他 R 型未实现，保持默认安全态
+                end
             endcase
         end
+
+        // -----------------------------------------------------
+        // beq：若 rs == rt 则分支
+        // 常见实现：ALU 做 rs - rt，若结果为 0 则 Zero=1
+        // -----------------------------------------------------
         6'b000100: begin // beq rs,rt,label
-            imm_s = 1'b0;
-            ALU_OP = 3'b001; // ALU做减法
-            PC_s = Zero ? 2'b10 : 2'b00; // Zero=1则分支
-            Write_Reg = 1'b0;
+            imm_s  = 1'b0;     // ALU 第二操作数用寄存器rt（用于比较 rs 与 rt）
+            ALU_OP = 3'b001;   // sub（假设 001 表示减法）
+            PC_s   = Zero ? 2'b10 : 2'b00; // Zero=1 则选择 branch_addr，否则 PC+4
+            Write_Reg = 1'b0;  // beq 不写寄存器
         end
+
+        // -----------------------------------------------------
+        // bne：若 rs != rt 则分支
+        // -----------------------------------------------------
         6'b000101: begin // bne rs,rt,label
-            imm_s = 1'b0;
-            ALU_OP = 3'b001; // ALU做减法
-            PC_s = !Zero ? 2'b10 : 2'b00; // Zero=0则分支
+            imm_s  = 1'b0;
+            ALU_OP = 3'b001;   // sub
+            PC_s   = (!Zero) ? 2'b10 : 2'b00; // Zero=0 才分支
             Write_Reg = 1'b0;
         end
+
+        // -----------------------------------------------------
+        // j：无条件跳转
+        // -----------------------------------------------------
         6'b000010: begin // j label
-            PC_s = 2'b11; // 选J型跳转地址
+            PC_s      = 2'b11; // PC = jump_addr
             Write_Reg = 1'b0;
         end
+
+        // -----------------------------------------------------
+        // jal：跳转并链接
+        // - PC 跳转到 jump_addr
+        // - 同时把“返回地址 PC+4”写入 $31
+        // -----------------------------------------------------
         6'b000011: begin // jal label
-            PC_s = 2'b11; // 选J型跳转地址
-            w_r_s = 2'b11; // 写$31（ra）
-            wr_data_s1 = 1'b1; // 写数据为PC+4
-            Write_Reg = 1'b1; // 写回$31
+            PC_s      = 2'b11; // 跳转
+            w_r_s     = 2'b11; // 目的寄存器选择 $31
+            wr_data_s1= 1'b1;  // 写回数据选择：PC+4（具体编码取决于你写回MUX）
+            wr_data_s0= 1'b0;  // 保持/配合组成 2'b10 或 2'b??（按你数据通路定义）
+            Write_Reg = 1'b1;  // 允许写回 $31
         end
-        // addi：用于初始化寄存器值，便于分支比较
+
+        // -----------------------------------------------------
+        // addi：rt = rs + signext(imm)
+        // 用于初始化寄存器值，便于后续分支比较
+        // -----------------------------------------------------
         6'b001000: begin // addi rt,rs,offset
-            imm_s = 1'b1;    // ALU源选立即数
-            ALU_OP = 3'b000; // ALU做加法
-            w_r_s = 2'b01;   // 写地址选rt
-            Write_Reg = 1'b1;// 允许写寄存器
-            PC_s = 2'b00;    // PC正常+4
+            imm_s     = 1'b1;    // ALU 第二操作数用立即数
+            ALU_OP    = 3'b000;  // add（假设 000 表示加法）
+            w_r_s     = 2'b01;   // 目的寄存器选择 rt
+            Write_Reg = 1'b1;    // 写回结果到寄存器
+            PC_s      = 2'b00;   // 正常 +4
         end
-        default: ;
+
+        default: begin
+            // 未实现指令：保持默认安全态
+        end
     endcase
 end
 

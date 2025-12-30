@@ -62,7 +62,6 @@ PC pc_module(
     .clk(clk),
     .rst_n(rst_n),
     .PC_s(PC_s),
-    .PC_new(PC_new),
     .R_Data_A(rs_data),
     .branch_addr(branch_addr),
     .jump_addr(jump_addr),
